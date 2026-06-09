@@ -1,0 +1,381 @@
+.job-status {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.job-loading {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    padding: 60px;
+    color: #555;
+}
+
+.spinner-lg {
+    width: 40px;
+    height: 40px;
+    border: 3px solid #222;
+    border-top-color: #6366f1;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+.job-error {
+    background: #1a0f0f;
+    border: 1px solid #5a2020;
+    border-radius: 12px;
+    padding: 20px;
+    color: #f87171;
+}
+
+.job-error button {
+    margin-top: 10px;
+    padding: 8px 16px;
+    border-radius: 8px;
+    border: 1px solid #5a2020;
+    background: #2a1515;
+    color: #f87171;
+    cursor: pointer;
+}
+
+.job-header {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 12px;
+    padding: 16px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.job-id {
+    font-size: 12px;
+    color: #555;
+    font-family: monospace;
+}
+
+.job-property {
+    font-size: 18px;
+    font-weight: 700;
+    color: #fff;
+    margin-top: 2px;
+}
+
+.job-meta {
+    display: flex;
+    gap: 12px;
+    font-size: 12px;
+    color: #555;
+}
+
+/* Stage track */
+.stage-track {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.stage {
+    padding: 16px 12px;
+    text-align: center;
+    border-right: 1px solid #2a2a2a;
+    transition: background 0.3s;
+}
+
+.stage:last-child {
+    border-right: none;
+}
+
+.stage.done {
+    background: #0f1a0f;
+}
+
+.stage.active {
+    background: #1a1a2e;
+}
+
+.stage.failed {
+    background: #1a0f0f;
+}
+
+.stage-icon {
+    font-size: 20px;
+    margin-bottom: 6px;
+    color: #555;
+}
+
+.stage.done .stage-icon {
+    color: #16a34a;
+}
+
+.stage.active .stage-icon {
+    color: #6366f1;
+}
+
+.stage.failed .stage-icon {
+    color: #dc2626;
+}
+
+.stage-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: #555;
+}
+
+.stage.done .stage-label {
+    color: #16a34a;
+}
+
+.stage.active .stage-label {
+    color: #a5b4fc;
+}
+
+.stage-desc {
+    font-size: 10px;
+    color: #6366f1;
+    margin-top: 4px;
+}
+
+.pulse {
+    animation: pulse 1.5s ease-in-out infinite;
+    display: inline-block;
+}
+
+@keyframes pulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.4;
+    }
+}
+
+/* Sections */
+.section-title {
+    font-size: 13px;
+    font-weight: 700;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 14px;
+}
+
+.script-section {
+    background: #141414;
+    border: 1px solid #2a2a2a;
+    border-radius: 12px;
+    padding: 20px;
+}
+
+.script-text {
+    font-size: 14px;
+    color: #aaa;
+    line-height: 1.8;
+    font-style: italic;
+}
+
+/* Segments */
+.segments-section {
+    background: #141414;
+    border: 1px solid #2a2a2a;
+    border-radius: 12px;
+    padding: 20px;
+}
+
+.segments-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px;
+}
+
+.segment-card {
+    background: #1a1a1a;
+    border: 1px solid #2a2a2a;
+    border-radius: 10px;
+    overflow: hidden;
+    transition: border-color 0.2s;
+}
+
+.segment-card.seg-done {
+    border-color: #1a3a1a;
+}
+
+.seg-thumb {
+    width: 100%;
+    height: 110px;
+    object-fit: cover;
+    display: block;
+}
+
+.seg-thumb-placeholder {
+    width: 100%;
+    height: 110px;
+    background: #222;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 28px;
+}
+
+.seg-info {
+    padding: 10px 12px;
+}
+
+.seg-num {
+    font-size: 11px;
+    font-weight: 700;
+    color: #555;
+    margin-bottom: 2px;
+}
+
+.seg-room {
+    font-size: 12px;
+    font-weight: 600;
+    color: #aaa;
+    text-transform: capitalize;
+    margin-bottom: 4px;
+}
+
+.seg-script {
+    font-size: 11px;
+    color: #555;
+    line-height: 1.4;
+    margin-bottom: 6px;
+    font-style: italic;
+}
+
+.seg-status {
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.seg-status.complete {
+    color: #16a34a;
+}
+
+.seg-status.queued {
+    color: #6366f1;
+}
+
+.seg-status.processing {
+    color: #f59e0b;
+}
+
+.seg-status.failed {
+    color: #dc2626;
+}
+
+/* Final video */
+.video-section {
+    background: #141414;
+    border: 1px solid #2a2a2a;
+    border-radius: 12px;
+    padding: 20px;
+}
+
+.final-video {
+    width: 100%;
+    border-radius: 10px;
+    max-height: 500px;
+    background: #000;
+}
+
+.video-actions {
+    display: flex;
+    gap: 12px;
+    margin-top: 16px;
+}
+
+.download-btn {
+    padding: 12px 24px;
+    border-radius: 10px;
+    border: 1px solid #333;
+    background: #222;
+    color: #ccc;
+    font-size: 14px;
+    font-weight: 600;
+    text-decoration: none;
+    transition: all 0.15s;
+}
+
+.download-btn:hover {
+    background: #2a2a2a;
+    color: #fff;
+}
+
+.new-btn {
+    padding: 12px 24px;
+    border-radius: 10px;
+    border: none;
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.new-btn:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 20px rgba(99, 102, 241, 0.4);
+}
+
+.failed-section {
+    background: #1a0f0f;
+    border: 1px solid #5a2020;
+    border-radius: 12px;
+    padding: 20px;
+    color: #f87171;
+}
+
+.failed-section button {
+    margin-top: 12px;
+    padding: 10px 20px;
+    border-radius: 8px;
+    border: 1px solid #5a2020;
+    background: #2a1515;
+    color: #f87171;
+    cursor: pointer;
+    font-size: 14px;
+}
+
+.processing-note {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 12px;
+    color: #444;
+    padding: 12px 0;
+}
+
+.spinner-sm {
+    width: 14px;
+    height: 14px;
+    border: 2px solid #333;
+    border-top-color: #6366f1;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+}
+
+@media (max-width: 700px) {
+    .stage-track {
+        grid-template-columns: repeat(3, 1fr);
+    }
+}

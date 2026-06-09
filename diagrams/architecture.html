@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Video Generation POC - Architecture</title>
+<style>
+body { margin: 0; padding: 40px; background: #fff; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+</style>
+</head>
+<body>
+<svg width="1800" height="820" viewBox="0 0 1800 820" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M 0 0 L 10 5 L 0 10 z" fill="#37474F"/>
+</marker>
+<marker id="arr-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+<path d="M 0 0 L 10 5 L 0 10 z" fill="#2E7D32"/>
+</marker>
+</defs>
+
+<!-- Title -->
+<text x="40" y="36" font-size="20" font-weight="700" fill="#232F3E">Property Video Generation POC</text>
+<text x="40" y="56" font-size="12" fill="#616161">Event-driven pipeline: Photos → AI Analysis → Narrative → Voiceover → Ken Burns Video (9:16 vertical)</text>
+
+<!-- ===== CLIENT + API ROW ===== -->
+
+<!-- CloudFront -->
+<rect x="40" y="90" width="120" height="90" rx="8" fill="#E8F4FD" stroke="#90CAF9" stroke-width="1.5"/>
+<text x="100" y="125" text-anchor="middle" font-size="26">🌐</text>
+<text x="100" y="148" text-anchor="middle" font-size="10" font-weight="600" fill="#212121">CloudFront</text>
+<text x="100" y="162" text-anchor="middle" font-size="8" fill="#616161">React Frontend</text>
+
+<!-- Arrow -->
+<line x1="160" y1="135" x2="200" y2="135" stroke="#37474F" stroke-width="1.5" marker-end="url(#arr)"/>
+
+<!-- API Gateway -->
+<rect x="200" y="90" width="120" height="90" rx="8" fill="#FFF3E0" stroke="#FFB74D" stroke-width="1.5"/>
+<text x="260" y="125" text-anchor="middle" font-size="26">🚪</text>
+<text x="260" y="148" text-anchor="middle" font-size="10" font-weight="600" fill="#212121">API Gateway</text>
+<text x="260" y="162" text-anchor="middle" font-size="8" fill="#616161">REST API</text>
+
+<!-- Arrow -->
+<line x1="320" y1="135" x2="360" y2="135" stroke="#37474F" stroke-width="1.5" marker-end="url(#arr)"/>
+
+<!-- API Lambda -->
+<rect x="360" y="90" width="120" height="90" rx="8" fill="#FFF3E0" stroke="#FFB74D" stroke-width="1.5"/>
+<text x="420" y="122" text-anchor="middle" font-size="22" font-weight="700" fill="#FF9800">λ</text>
+<text x="420" y="148" text-anchor="middle" font-size="10" font-weight="600" fill="#212121">API Lambda</text>
+<text x="420" y="162" text-anchor="middle" font-size="8" fill="#616161">Job CRUD + Status</text>
+
+<!-- Arrow -->
+<line x1="480" y1="135" x2="520" y2="135" stroke="#37474F" stroke-width="1.5" marker-end="url(#arr)"/>
+
+<!-- EventBridge -->
+<rect x="520" y="90" width="140" height="90" rx="8" fill="#FFFDE7" stroke="#FDD835" stroke-width="1.5"/>
+<text x="590" y="122" text-anchor="middle" font-size="22">⚡</text>
+<text x="590" y="148" text-anchor="middle" font-size="10" font-weight="600" fill="#212121">EventBridge</text>
+<text x="590" y="162" text-anchor="middle" font-size="8" fill="#616161">Pipeline Orchestration</text>
+
+<!-- ===== PIPELINE ROW ===== -->
+<rect x="40" y="230" width="1720" height="240" rx="10" fill="#E8F5E9" stroke="#81C784" stroke-width="1.5"/>
+<text x="60" y="254" font-size="11" font-weight="700" fill="#2E7D32" letter-spacing="0.5">PROCESSING PIPELINE</text>
+
+<!-- Arrow from EventBridge down to pipeline -->
+<line x1="590" y1="180" x2="590" y2="230" stroke="#37474F" stroke-width="1.5" marker-end="url(#arr)"/>
+
+<!-- Step 1 -->
+<rect x="80" y="270" width="340" height="170" rx="8" fill="#fff" stroke="#A5D6A7" stroke-width="1"/>
+<rect x="80" y="270" width="340" height="26" rx="8" fill="#2E7D32"/>
+<rect x="80" y="284" width="340" height="12" fill="#2E7D32"/>
+<text x="250" y="289" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">STEP 1 — Image Analysis</text>
+<text x="250" y="325" text-anchor="middle" font-size="18" font-weight="700" fill="#FF9800">λ</text>
+<text x="250" y="345" text-anchor="middle" font-size="10" font-weight="600" fill="#212121">kling-poc-image-analysis</text>
+<text x="250" y="362" text-anchor="middle" font-size="9" fill="#616161">Analyzes each photo concurrently (5 threads)</text>
+<text x="250" y="395" text-anchor="middle" font-size="9" font-weight="600" fill="#1565C0">↓ Amazon Bedrock (Claude)</text>
+<text x="250" y="412" text-anchor="middle" font-size="8" fill="#616161">Scene description, mood, features</text>
+
+<!-- Arrow 1→2 -->
+<line x1="420" y1="355" x2="470" y2="355" stroke="#2E7D32" stroke-width="2" marker-end="url(#arr-g)"/>
+
+<!-- Step 2 -->
+<rect x="470" y="270" width="340" height="170" rx="8" fill="#fff" stroke="#A5D6A7" stroke-width="1"/>
+<rect x="470" y="270" width="340" height="26" rx="8" fill="#2E7D32"/>
+<rect x="470" y="284" width="340" height="12" fill="#2E7D32"/>
+<text x="640" y="289" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">STEP 2 — Story Sequencing</text>
+<text x="640" y="325" text-anchor="middle" font-size="18" font-weight="700" fill="#FF9800">λ</text>
+<text x="640" y="345" text-anchor="middle" font-size="10" font-weight="600" fill="#212121">kling-poc-story-sequencing</text>
+<text x="640" y="362" text-anchor="middle" font-size="9" fill="#616161">Orders photos, writes narrative arc</text>
+<text x="640" y="395" text-anchor="middle" font-size="9" font-weight="600" fill="#1565C0">↓ Amazon Bedrock (Claude)</text>
+<text x="640" y="412" text-anchor="middle" font-size="8" fill="#616161">Per-segment narration script</text>
+
+<!-- Arrow 2→3 -->
+<line x1="810" y1="355" x2="860" y2="355" stroke="#2E7D32" stroke-width="2" marker-end="url(#arr-g)"/>
+
+<!-- Step 3 -->
+<rect x="860" y="270" width="340" height="170" rx="8" fill="#fff" stroke="#A5D6A7" stroke-width="1"/>
+<rect x="860" y="270" width="340" height="26" rx="8" fill="#2E7D32"/>
+<rect x="860" y="284" width="340" height="12" fill="#2E7D32"/>
+<text x="1030" y="289" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">STEP 3 — Voiceover</text>
+<text x="1030" y="325" text-anchor="middle" font-size="18" font-weight="700" fill="#FF9800">λ</text>
+<text x="1030" y="345" text-anchor="middle" font-size="10" font-weight="600" fill="#212121">kling-poc-voiceover</text>
+<text x="1030" y="362" text-anchor="middle" font-size="9" fill="#616161">Converts narration to speech</text>
+<text x="1030" y="395" text-anchor="middle" font-size="9" font-weight="600" fill="#1565C0">↓ Amazon Polly</text>
+<text x="1030" y="412" text-anchor="middle" font-size="8" fill="#616161">Neural voice → MP3 audio</text>
+
+<!-- Arrow 3→4 -->
+<line x1="1200" y1="355" x2="1250" y2="355" stroke="#2E7D32" stroke-width="2" marker-end="url(#arr-g)"/>
+
+<!-- Step 4 -->
+<rect x="1250" y="270" width="340" height="170" rx="8" fill="#fff" stroke="#A5D6A7" stroke-width="1"/>
+<rect x="1250" y="270" width="340" height="26" rx="8" fill="#2E7D32"/>
+<rect x="1250" y="284" width="340" height="12" fill="#2E7D32"/>
+<text x="1420" y="289" text-anchor="middle" font-size="11" font-weight="700" fill="#fff">STEP 4 — Video Assembly</text>
+<text x="1420" y="325" text-anchor="middle" font-size="18" font-weight="700" fill="#FF9800">λ</text>
+<text x="1420" y="345" text-anchor="middle" font-size="10" font-weight="600" fill="#212121">kling-poc-ken-burns</text>
+<text x="1420" y="362" text-anchor="middle" font-size="9" fill="#616161">Ken Burns pan/zoom + audio overlay</text>
+<text x="1420" y="395" text-anchor="middle" font-size="9" font-weight="600" fill="#1565C0">↓ FFmpeg Lambda Layer</text>
+<text x="1420" y="412" text-anchor="middle" font-size="8" fill="#616161">1080×1920 vertical • crop-to-fill</text>
+
+<!-- ===== DATA LAYER ===== -->
+<rect x="40" y="530" width="1720" height="180" rx="10" fill="#F3E5F5" stroke="#CE93D8" stroke-width="1.5"/>
+<text x="60" y="554" font-size="11" font-weight="700" fill="#6A1B9A" letter-spacing="0.5">DATA &amp; STORAGE LAYER</text>
+
+<!-- DynamoDB -->
+<rect x="100" y="575" width="200" height="110" rx="8" fill="#fff" stroke="#CE93D8" stroke-width="1"/>
+<text x="200" y="605" text-anchor="middle" font-size="22">🗄️</text>
+<text x="200" y="628" text-anchor="middle" font-size="10" font-weight="600" fill="#212121">Amazon DynamoDB</text>
+<text x="200" y="645" text-anchor="middle" font-size="9" fill="#616161">property-video-jobs</text>
+<text x="200" y="660" text-anchor="middle" font-size="9" fill="#616161">property-video-stories</text>
+<text x="200" y="675" text-anchor="middle" font-size="8" fill="#9E9E9E">Job status + progress tracking</text>
+
+<!-- S3 Input -->
+<rect x="380" y="575" width="200" height="110" rx="8" fill="#fff" stroke="#CE93D8" stroke-width="1"/>
+<text x="480" y="605" text-anchor="middle" font-size="22">📥</text>
+<text x="480" y="628" text-anchor="middle" font-size="10" font-weight="600" fill="#212121">S3 — Input</text>
+<text x="480" y="645" text-anchor="middle" font-size="9" fill="#616161">realestate-video-input</text>
+<text x="480" y="662" text-anchor="middle" font-size="8" fill="#9E9E9E">Uploaded property photos</text>
+
+<!-- S3 Assets -->
+<rect x="660" y="575" width="200" height="110" rx="8" fill="#fff" stroke="#CE93D8" stroke-width="1"/>
+<text x="760" y="605" text-anchor="middle" font-size="22">🎵</text>
+<text x="760" y="628" text-anchor="middle" font-size="10" font-weight="600" fill="#212121">S3 — Assets</text>
+<text x="760" y="645" text-anchor="middle" font-size="9" fill="#616161">realestate-video-assets</text>
+<text x="760" y="662" text-anchor="middle" font-size="8" fill="#9E9E9E">Voiceover audio, intermediates</text>
+
+<!-- S3 Output -->
+<rect x="940" y="575" width="200" height="110" rx="8" fill="#fff" stroke="#CE93D8" stroke-width="1"/>
+<text x="1040" y="605" text-anchor="middle" font-size="22">🎬</text>
+<text x="1040" y="628" text-anchor="middle" font-size="10" font-weight="600" fill="#212121">S3 — Output</text>
+<text x="1040" y="645" text-anchor="middle" font-size="9" fill="#616161">realestate-video-output</text>
+<text x="1040" y="662" text-anchor="middle" font-size="8" fill="#9E9E9E">Final MP4 videos</text>
+
+<!-- FFmpeg Layer -->
+<rect x="1220" y="575" width="200" height="110" rx="8" fill="#fff" stroke="#CE93D8" stroke-width="1"/>
+<text x="1320" y="605" text-anchor="middle" font-size="22">📦</text>
+<text x="1320" y="628" text-anchor="middle" font-size="10" font-weight="600" fill="#212121">Lambda Layer</text>
+<text x="1320" y="645" text-anchor="middle" font-size="9" fill="#616161">ffmpeg-static:1</text>
+<text x="1320" y="662" text-anchor="middle" font-size="8" fill="#9E9E9E">Video encoding binary</text>
+
+<!-- AI Services box -->
+<rect x="1500" y="575" width="220" height="110" rx="8" fill="#fff" stroke="#CE93D8" stroke-width="1"/>
+<text x="1610" y="605" text-anchor="middle" font-size="22">🧠</text>
+<text x="1610" y="628" text-anchor="middle" font-size="10" font-weight="600" fill="#212121">AI Services</text>
+<text x="1610" y="648" text-anchor="middle" font-size="9" fill="#1565C0">Amazon Bedrock (Claude)</text>
+<text x="1610" y="665" text-anchor="middle" font-size="9" fill="#1565C0">Amazon Polly (Neural TTS)</text>
+<text x="1610" y="680" text-anchor="middle" font-size="8" fill="#9E9E9E">Future: Kling AI via Bedrock</text>
+
+<!-- Vertical arrows: Pipeline → Data Layer -->
+<line x1="200" y1="470" x2="200" y2="575" stroke="#37474F" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr)"/>
+<text x="210" y="510" font-size="8" fill="#616161">status updates</text>
+
+<line x1="480" y1="470" x2="480" y2="575" stroke="#37474F" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr)"/>
+<text x="490" y="510" font-size="8" fill="#616161">read photos</text>
+
+<line x1="760" y1="470" x2="760" y2="575" stroke="#37474F" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr)"/>
+<text x="770" y="510" font-size="8" fill="#616161">store audio</text>
+
+<line x1="1040" y1="470" x2="1040" y2="575" stroke="#37474F" stroke-width="1" stroke-dasharray="4,3" marker-end="url(#arr)"/>
+<text x="1050" y="510" font-size="8" fill="#616161">write MP4</text>
+
+<!-- Arrow: API Lambda down to DynamoDB -->
+<line x1="420" y1="180" x2="420" y2="210" stroke="#37474F" stroke-width="1" stroke-dasharray="4,3"/>
+<line x1="420" y1="210" x2="200" y2="210" stroke="#37474F" stroke-width="1" stroke-dasharray="4,3"/>
+<line x1="200" y1="210" x2="200" y2="230" stroke="#37474F" stroke-width="1" stroke-dasharray="4,3"/>
+
+<!-- Legend -->
+<rect x="40" y="740" width="600" height="60" rx="6" fill="#FAFAFA" stroke="#E0E0E0" stroke-width="1"/>
+<text x="60" y="762" font-size="10" font-weight="600" fill="#212121">Legend:</text>
+<line x1="120" y1="758" x2="160" y2="758" stroke="#37474F" stroke-width="1.5" marker-end="url(#arr)"/>
+<text x="170" y="762" font-size="9" fill="#616161">Data flow</text>
+<line x1="260" y1="758" x2="300" y2="758" stroke="#2E7D32" stroke-width="2" marker-end="url(#arr-g)"/>
+<text x="310" y="762" font-size="9" fill="#616161">Pipeline sequence</text>
+<line x1="420" y1="758" x2="460" y2="758" stroke="#37474F" stroke-width="1" stroke-dasharray="4,3"/>
+<text x="470" y="762" font-size="9" fill="#616161">Read/Write</text>
+<text x="60" y="785" font-size="9" fill="#9E9E9E">Output: 1080×1920 vertical MP4 (iPhone/Reels format) • Ken Burns crop-to-fill • Neural voiceover narration</text>
+
+</svg>
+</body>
+</html>

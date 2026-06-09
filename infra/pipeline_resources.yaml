@@ -1,0 +1,925 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Pipeline resources for the Kling AI Video POC: S3 buckets, DynamoDB tables,
+  EventBridge custom bus and rules, API Gateway webhook endpoint, Lambda functions,
+  and Step Functions assembly state machine.
+  Requirements: 9.4, 9.6, 10.1, 10.3, 10.4, 12.6, 12.7
+
+# ---------------------------------------------------------------------------
+# Parameters
+# ---------------------------------------------------------------------------
+Parameters:
+
+  IamStackName:
+    Type: String
+    Description: Name of the IAM-and-secrets CloudFormation stack (for ImportValue cross-stack references)
+    Default: kling-poc-iam-and-secrets
+
+  LambdaCodeBucket:
+    Type: String
+    Description: S3 bucket containing Lambda deployment packages
+
+  LambdaCodeKey:
+    Type: String
+    Description: S3 key prefix for Lambda deployment packages (e.g. "lambda/v1.0.0")
+    Default: lambda/latest
+
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+Resources:
+
+  # =========================================================================
+  # S3 Buckets
+  # =========================================================================
+
+  # 1. Input bucket — receives property photos, triggers image analysis
+  InputBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: realestate-video-input
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      NotificationConfiguration:
+        QueueConfigurations:
+          - Event: s3:ObjectCreated:*
+            Queue: !GetAtt ImageAnalysisTriggerQueue.Arn
+      Tags:
+        - Key: Project
+          Value: kling-ai-video-poc
+
+  # Allow S3 to publish to the SQS queue
+  ImageAnalysisTriggerQueuePolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref ImageAnalysisTriggerQueue
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: s3.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt ImageAnalysisTriggerQueue.Arn
+            Condition:
+              ArnLike:
+                aws:SourceArn: !Sub "arn:aws:s3:::realestate-video-input"
+
+  # SQS queue used as the S3 event notification target (Lambda trigger)
+  ImageAnalysisTriggerQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: realestate-video-image-analysis-trigger
+      VisibilityTimeout: 300
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ImageAnalysisTriggerDLQ.Arn
+        maxReceiveCount: 3
+      Tags:
+        - Key: Project
+          Value: kling-ai-video-poc
+
+  ImageAnalysisTriggerDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: realestate-video-image-analysis-trigger-dlq
+      Tags:
+        - Key: Project
+          Value: kling-ai-video-poc
+
+  # 2. Assets bucket — voiceover MP3s and video segments (intermediate storage)
+  AssetsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: realestate-video-assets
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireAfter30Days
+            Status: Enabled
+            ExpirationInDays: 30
+      Tags:
+        - Key: Project
+          Value: kling-ai-video-poc
+
+  # 3. Output bucket — final assembled MP4 videos
+  OutputBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: realestate-video-output
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Project
+          Value: kling-ai-video-poc
+
+
+  # =========================================================================
+  # DynamoDB Tables
+  # =========================================================================
+
+  # 1. Jobs table — tracks overall pipeline job state
+  JobsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: property-video-jobs
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: job_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: job_id
+          KeyType: HASH
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+      Tags:
+        - Key: Project
+          Value: kling-ai-video-poc
+
+  # 2. Images table — stores per-image analysis results
+  ImagesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: property-video-images
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: image_id
+          AttributeType: S
+        - AttributeName: job_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: image_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: job_id-index
+          KeySchema:
+            - AttributeName: job_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Project
+          Value: kling-ai-video-poc
+
+  # 3. Stories table — stores story sequences and scene segments
+  StoriesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: property-video-stories
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: story_id
+          AttributeType: S
+        - AttributeName: job_id
+          AttributeType: S
+        - AttributeName: kling_task_id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: story_id
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: job_id-index
+          KeySchema:
+            - AttributeName: job_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+        - IndexName: kling_task_id-index
+          KeySchema:
+            - AttributeName: kling_task_id
+              KeyType: HASH
+          Projection:
+            ProjectionType: ALL
+      Tags:
+        - Key: Project
+          Value: kling-ai-video-poc
+
+
+  # =========================================================================
+  # EventBridge — Custom Event Bus
+  # =========================================================================
+
+  PipelineEventBus:
+    Type: AWS::Events::EventBus
+    Properties:
+      Name: realestate-video-pipeline
+      Tags:
+        - Key: Project
+          Value: kling-ai-video-poc
+
+  # Dead-letter queue for failed EventBridge rule deliveries
+  EventBridgeDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: realestate-video-pipeline-eventbridge-dlq
+      Tags:
+        - Key: Project
+          Value: kling-ai-video-poc
+
+  # Allow EventBridge to send messages to the DLQ
+  EventBridgeDLQPolicy:
+    Type: AWS::SQS::QueuePolicy
+    Properties:
+      Queues:
+        - !Ref EventBridgeDLQ
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sqs:SendMessage
+            Resource: !GetAtt EventBridgeDLQ.Arn
+
+  # CloudWatch alarm: alert when any event fails delivery to a target
+  EventBridgeDLQAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: realestate-video-pipeline-eventbridge-dlq-not-empty
+      AlarmDescription: >
+        Fires when EventBridge fails to deliver events to Lambda targets.
+        Check the DLQ for failed event payloads.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt EventBridgeDLQ.QueueName
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+      TreatMissingData: notBreaching
+
+  # -------------------------------------------------------------------------
+  # EventBridge Rules
+  # -------------------------------------------------------------------------
+
+  # Rule 1: all-images-analyzed → StorySequencingFunction
+  AllImagesAnalyzedRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: realestate-video-all-images-analyzed
+      EventBusName: !Ref PipelineEventBus
+      EventPattern:
+        source:
+          - realestate.video.pipeline
+        detail-type:
+          - all-images-analyzed
+      State: ENABLED
+      Targets:
+        - Id: StorySequencingFunctionTarget
+          Arn: !GetAtt StorySequencingFunction.Arn
+          RetryPolicy:
+            MaximumRetryAttempts: 3
+            MaximumEventAgeInSeconds: 3600
+          DeadLetterConfig:
+            Arn: !GetAtt EventBridgeDLQ.Arn
+
+  AllImagesAnalyzedRulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt StorySequencingFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt AllImagesAnalyzedRule.Arn
+
+  # Rule 2: story-generated → VoiceoverGenerationFunction
+  StoryGeneratedRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: realestate-video-story-generated
+      EventBusName: !Ref PipelineEventBus
+      EventPattern:
+        source:
+          - realestate.video.pipeline
+        detail-type:
+          - story-generated
+      State: ENABLED
+      Targets:
+        - Id: VoiceoverGenerationFunctionTarget
+          Arn: !GetAtt VoiceoverGenerationFunction.Arn
+          RetryPolicy:
+            MaximumRetryAttempts: 3
+            MaximumEventAgeInSeconds: 3600
+          DeadLetterConfig:
+            Arn: !GetAtt EventBridgeDLQ.Arn
+
+  StoryGeneratedRulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt VoiceoverGenerationFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt StoryGeneratedRule.Arn
+
+  # Rule 3: voiceover-complete → VideoGenerationOrchestratorFunction
+  VoiceoverCompleteRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: realestate-video-voiceover-complete
+      EventBusName: !Ref PipelineEventBus
+      EventPattern:
+        source:
+          - realestate.video.pipeline
+        detail-type:
+          - voiceover-complete
+      State: ENABLED
+      Targets:
+        - Id: VideoGenerationOrchestratorFunctionTarget
+          Arn: !GetAtt VideoGenerationOrchestratorFunction.Arn
+          RetryPolicy:
+            MaximumRetryAttempts: 3
+            MaximumEventAgeInSeconds: 3600
+          DeadLetterConfig:
+            Arn: !GetAtt EventBridgeDLQ.Arn
+
+  VoiceoverCompleteRulePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt VideoGenerationOrchestratorFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt VoiceoverCompleteRule.Arn
+
+  # Rule 4: all-segments-complete → Step Functions assembly state machine
+  AllSegmentsCompleteRule:
+    Type: AWS::Events::Rule
+    Properties:
+      Name: realestate-video-all-segments-complete
+      EventBusName: !Ref PipelineEventBus
+      EventPattern:
+        source:
+          - realestate.video.pipeline
+        detail-type:
+          - all-segments-complete
+      State: ENABLED
+      Targets:
+        - Id: AssemblyStateMachineTarget
+          Arn: !Ref AssemblyStateMachine
+          RoleArn: !GetAtt EventBridgeStateMachineRole.Arn
+          RetryPolicy:
+            MaximumRetryAttempts: 3
+            MaximumEventAgeInSeconds: 3600
+          DeadLetterConfig:
+            Arn: !GetAtt EventBridgeDLQ.Arn
+
+  # IAM role allowing EventBridge to start Step Functions executions
+  EventBridgeStateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "kling-poc-eventbridge-sfn-role-${AWS::Region}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: events.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: StartStateMachineExecution
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: states:StartExecution
+                Resource: !Ref AssemblyStateMachine
+      Tags:
+        - Key: Project
+          Value: kling-ai-video-poc
+
+
+  # =========================================================================
+  # Lambda Functions
+  # =========================================================================
+
+  # 1. ImageAnalysisFunction — analyzes property photos via Bedrock
+  #    Timeout: 60s | Memory: 1024 MB
+  ImageAnalysisFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: kling-poc-image-analysis
+      Runtime: python3.12
+      Handler: handler.handler
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Sub "${LambdaCodeKey}/image_analysis.zip"
+      Timeout: 60
+      MemorySize: 1024
+      TracingConfig:
+        Mode: Active
+      Role: !ImportValue
+        Fn::Sub: "${IamStackName}-ImageAnalysisFunctionRoleArn"
+      Environment:
+        Variables:
+          JOBS_TABLE_NAME: !Ref JobsTable
+          IMAGES_TABLE_NAME: !Ref ImagesTable
+          INPUT_BUCKET_NAME: !Ref InputBucket
+          EVENT_BUS_NAME: !Ref PipelineEventBus
+      Tags:
+        - Key: Project
+          Value: kling-ai-video-poc
+
+  # SQS event source mapping: S3 → SQS → ImageAnalysisFunction
+  ImageAnalysisFunctionEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt ImageAnalysisTriggerQueue.Arn
+      FunctionName: !GetAtt ImageAnalysisFunction.Arn
+      BatchSize: 10
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+
+  # 2. StorySequencingFunction — sequences images and generates narrative
+  #    Timeout: 90s | Memory: 512 MB
+  StorySequencingFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: kling-poc-story-sequencing
+      Runtime: python3.12
+      Handler: handler.handler
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Sub "${LambdaCodeKey}/story_sequencing.zip"
+      Timeout: 90
+      MemorySize: 512
+      TracingConfig:
+        Mode: Active
+      Role: !ImportValue
+        Fn::Sub: "${IamStackName}-StorySequencingFunctionRoleArn"
+      Environment:
+        Variables:
+          JOBS_TABLE_NAME: !Ref JobsTable
+          IMAGES_TABLE_NAME: !Ref ImagesTable
+          STORIES_TABLE_NAME: !Ref StoriesTable
+          EVENT_BUS_NAME: !Ref PipelineEventBus
+      Tags:
+        - Key: Project
+          Value: kling-ai-video-poc
+
+  # 3. VoiceoverGenerationFunction — generates MP3 voiceover via ElevenLabs
+  #    Timeout: 120s | Memory: 512 MB
+  VoiceoverGenerationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: kling-poc-voiceover-generation
+      Runtime: python3.12
+      Handler: handler.handler
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Sub "${LambdaCodeKey}/voiceover_generation.zip"
+      Timeout: 120
+      MemorySize: 512
+      TracingConfig:
+        Mode: Active
+      Role: !ImportValue
+        Fn::Sub: "${IamStackName}-VoiceoverGenerationFunctionRoleArn"
+      Environment:
+        Variables:
+          JOBS_TABLE_NAME: !Ref JobsTable
+          STORIES_TABLE_NAME: !Ref StoriesTable
+          ASSETS_BUCKET_NAME: !Ref AssetsBucket
+          EVENT_BUS_NAME: !Ref PipelineEventBus
+      Tags:
+        - Key: Project
+          Value: kling-ai-video-poc
+
+  # 4. VideoGenerationOrchestratorFunction — submits images to Kling.ai
+  #    Timeout: 60s | Memory: 512 MB
+  VideoGenerationOrchestratorFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: kling-poc-video-generation-orchestrator
+      Runtime: python3.12
+      Handler: handler.handler
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Sub "${LambdaCodeKey}/video_generation_orchestrator.zip"
+      Timeout: 60
+      MemorySize: 512
+      TracingConfig:
+        Mode: Active
+      Role: !ImportValue
+        Fn::Sub: "${IamStackName}-VideoGenerationOrchestratorFunctionRoleArn"
+      Environment:
+        Variables:
+          JOBS_TABLE_NAME: !Ref JobsTable
+          STORIES_TABLE_NAME: !Ref StoriesTable
+          INPUT_BUCKET_NAME: !Ref InputBucket
+          # Webhook URL is set at deploy time; update after API Gateway is created
+          WEBHOOK_URL: !Sub "https://${WebhookApi}.execute-api.${AWS::Region}.amazonaws.com/prod/webhook/kling"
+      Tags:
+        - Key: Project
+          Value: kling-ai-video-poc
+
+  # 5. KlingWebhookHandlerFunction — receives Kling.ai completion callbacks
+  #    Timeout: 30s | Memory: 512 MB
+  #    NOTE: ReservedConcurrentExecutions=50 ensures the webhook endpoint can
+  #    handle up to 50 simultaneous Kling.ai callbacks without throttling.
+  #    This matches the maximum expected concurrency (20 segments × safety factor).
+  KlingWebhookHandlerFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: kling-poc-kling-webhook-handler
+      Runtime: python3.12
+      Handler: handler.handler
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Sub "${LambdaCodeKey}/kling_webhook_handler.zip"
+      Timeout: 30
+      MemorySize: 512
+      ReservedConcurrentExecutions: 50
+      TracingConfig:
+        Mode: Active
+      Role: !ImportValue
+        Fn::Sub: "${IamStackName}-KlingWebhookHandlerFunctionRoleArn"
+      Environment:
+        Variables:
+          STORIES_TABLE_NAME: !Ref StoriesTable
+          ASSETS_BUCKET_NAME: !Ref AssetsBucket
+          EVENT_BUS_NAME: !Ref PipelineEventBus
+      Tags:
+        - Key: Project
+          Value: kling-ai-video-poc
+
+  # 6a. AssemblyRetrieveSegmentsFunction — fetches segment S3 keys for assembly
+  #     Timeout: 30s | Memory: 256 MB
+  AssemblyRetrieveSegmentsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: kling-poc-assembly-retrieve-segments
+      Runtime: python3.12
+      Handler: handler.handler
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Sub "${LambdaCodeKey}/assembly_retrieve_segments.zip"
+      Timeout: 30
+      MemorySize: 256
+      TracingConfig:
+        Mode: Active
+      Role: !ImportValue
+        Fn::Sub: "${IamStackName}-AssemblyFunctionRoleArn"
+      Environment:
+        Variables:
+          JOBS_TABLE_NAME: !Ref JobsTable
+          STORIES_TABLE_NAME: !Ref StoriesTable
+          ASSETS_BUCKET_NAME: !Ref AssetsBucket
+      Tags:
+        - Key: Project
+          Value: kling-ai-video-poc
+
+  # 6b. AssemblyAssembleVideoFunction — concatenates video segments into final MP4
+  #     Timeout: 300s | Memory: 1024 MB
+  AssemblyAssembleVideoFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: kling-poc-assembly-assemble-video
+      Runtime: python3.12
+      Handler: handler.handler
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Sub "${LambdaCodeKey}/assembly_assemble_video.zip"
+      Timeout: 300
+      MemorySize: 1024
+      TracingConfig:
+        Mode: Active
+      Role: !ImportValue
+        Fn::Sub: "${IamStackName}-AssemblyFunctionRoleArn"
+      Environment:
+        Variables:
+          JOBS_TABLE_NAME: !Ref JobsTable
+          STORIES_TABLE_NAME: !Ref StoriesTable
+          ASSETS_BUCKET_NAME: !Ref AssetsBucket
+          OUTPUT_BUCKET_NAME: !Ref OutputBucket
+      Tags:
+        - Key: Project
+          Value: kling-ai-video-poc
+
+  # 6c. AssemblyFinalizeJobFunction — marks job complete in DynamoDB
+  #     Timeout: 30s | Memory: 256 MB
+  AssemblyFinalizeJobFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: kling-poc-assembly-finalize-job
+      Runtime: python3.12
+      Handler: handler.handler
+      Code:
+        S3Bucket: !Ref LambdaCodeBucket
+        S3Key: !Sub "${LambdaCodeKey}/assembly_finalize_job.zip"
+      Timeout: 30
+      MemorySize: 256
+      TracingConfig:
+        Mode: Active
+      Role: !ImportValue
+        Fn::Sub: "${IamStackName}-AssemblyFunctionRoleArn"
+      Environment:
+        Variables:
+          JOBS_TABLE_NAME: !Ref JobsTable
+          OUTPUT_BUCKET_NAME: !Ref OutputBucket
+      Tags:
+        - Key: Project
+          Value: kling-ai-video-poc
+
+
+  # =========================================================================
+  # Step Functions — Assembly State Machine
+  # =========================================================================
+
+  # IAM role for the state machine to invoke Lambda functions
+  AssemblyStateMachineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "kling-poc-assembly-sfn-role-${AWS::Region}"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: states.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: InvokeLambdaFunctions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: lambda:InvokeFunction
+                Resource:
+                  - !GetAtt AssemblyRetrieveSegmentsFunction.Arn
+                  - !GetAtt AssemblyAssembleVideoFunction.Arn
+                  - !GetAtt AssemblyFinalizeJobFunction.Arn
+        - PolicyName: CloudWatchLogs
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogGroup
+                  - logs:CreateLogDelivery
+                  - logs:PutLogEvents
+                  - logs:GetLogDelivery
+                  - logs:UpdateLogDelivery
+                  - logs:DeleteLogDelivery
+                  - logs:ListLogDeliveries
+                  - logs:PutResourcePolicy
+                  - logs:DescribeResourcePolicies
+                  - logs:DescribeLogGroups
+                Resource: "*"
+        - PolicyName: XRayTracing
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - xray:PutTraceSegments
+                  - xray:PutTelemetryRecords
+                  - xray:GetSamplingRules
+                  - xray:GetSamplingTargets
+                Resource: "*"
+      Tags:
+        - Key: Project
+          Value: kling-ai-video-poc
+
+  # Assembly state machine — ASL inlined from src/assembly/state_machine.json
+  # with Lambda ARN substitutions applied via CloudFormation Fn::Sub
+  AssemblyStateMachine:
+    Type: AWS::StepFunctions::StateMachine
+    Properties:
+      StateMachineName: kling-poc-assembly
+      RoleArn: !GetAtt AssemblyStateMachineRole.Arn
+      TracingConfiguration:
+        Enabled: true
+      DefinitionString: !Sub
+        - |
+          {
+            "Comment": "Assembles video segments into final property tour MP4",
+            "StartAt": "RetrieveSegments",
+            "States": {
+              "RetrieveSegments": {
+                "Type": "Task",
+                "Resource": "${RetrieveSegmentsLambdaArn}",
+                "Next": "AssembleVideo",
+                "Catch": [
+                  {
+                    "ErrorEquals": ["States.ALL"],
+                    "Next": "HandleFailure",
+                    "ResultPath": "$.error"
+                  }
+                ]
+              },
+              "AssembleVideo": {
+                "Type": "Task",
+                "Resource": "${AssembleVideoLambdaArn}",
+                "Next": "FinalizeJob",
+                "Catch": [
+                  {
+                    "ErrorEquals": ["States.ALL"],
+                    "Next": "HandleFailure",
+                    "ResultPath": "$.error"
+                  }
+                ]
+              },
+              "FinalizeJob": {
+                "Type": "Task",
+                "Resource": "${FinalizeJobLambdaArn}",
+                "End": true
+              },
+              "HandleFailure": {
+                "Type": "Task",
+                "Resource": "${FinalizeJobLambdaArn}",
+                "End": true
+              }
+            }
+          }
+        - RetrieveSegmentsLambdaArn: !GetAtt AssemblyRetrieveSegmentsFunction.Arn
+          AssembleVideoLambdaArn: !GetAtt AssemblyAssembleVideoFunction.Arn
+          FinalizeJobLambdaArn: !GetAtt AssemblyFinalizeJobFunction.Arn
+      Tags:
+        - Key: Project
+          Value: kling-ai-video-poc
+
+
+  # =========================================================================
+  # API Gateway — Webhook endpoint for Kling.ai callbacks
+  # =========================================================================
+
+  WebhookApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: kling-poc-webhook-api
+      Description: >
+        REST API that receives Kling.ai video generation completion webhooks.
+        NOTE: KlingWebhookHandlerFunction has ReservedConcurrentExecutions=50
+        to handle up to 50 simultaneous Kling.ai callbacks without throttling.
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+      Tags:
+        - Key: Project
+          Value: kling-ai-video-poc
+
+  # /webhook resource
+  WebhookResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref WebhookApi
+      ParentId: !GetAtt WebhookApi.RootResourceId
+      PathPart: webhook
+
+  # /webhook/kling resource
+  WebhookKlingResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref WebhookApi
+      ParentId: !Ref WebhookResource
+      PathPart: kling
+
+  # POST /webhook/kling → KlingWebhookHandlerFunction (Lambda proxy integration)
+  WebhookKlingPostMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref WebhookApi
+      ResourceId: !Ref WebhookKlingResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub
+          - "arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${LambdaArn}/invocations"
+          - LambdaArn: !GetAtt KlingWebhookHandlerFunction.Arn
+
+  # Allow API Gateway to invoke the webhook handler Lambda
+  WebhookLambdaPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt KlingWebhookHandlerFunction.Arn
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${WebhookApi}/*/POST/webhook/kling"
+
+  # Deploy the API to the prod stage
+  WebhookApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - WebhookKlingPostMethod
+    Properties:
+      RestApiId: !Ref WebhookApi
+      Description: Initial deployment to prod stage
+
+  WebhookApiProdStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref WebhookApi
+      DeploymentId: !Ref WebhookApiDeployment
+      StageName: prod
+      TracingEnabled: true
+      Tags:
+        - Key: Project
+          Value: kling-ai-video-poc
+
+
+# ---------------------------------------------------------------------------
+# Outputs
+# ---------------------------------------------------------------------------
+Outputs:
+
+  # --- Lambda ARNs ---
+
+  ImageAnalysisFunctionArn:
+    Description: ARN of the ImageAnalysisFunction Lambda
+    Value: !GetAtt ImageAnalysisFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-ImageAnalysisFunctionArn"
+
+  StorySequencingFunctionArn:
+    Description: ARN of the StorySequencingFunction Lambda
+    Value: !GetAtt StorySequencingFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-StorySequencingFunctionArn"
+
+  VoiceoverGenerationFunctionArn:
+    Description: ARN of the VoiceoverGenerationFunction Lambda
+    Value: !GetAtt VoiceoverGenerationFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-VoiceoverGenerationFunctionArn"
+
+  VideoGenerationOrchestratorFunctionArn:
+    Description: ARN of the VideoGenerationOrchestratorFunction Lambda
+    Value: !GetAtt VideoGenerationOrchestratorFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-VideoGenerationOrchestratorFunctionArn"
+
+  KlingWebhookHandlerFunctionArn:
+    Description: ARN of the KlingWebhookHandlerFunction Lambda
+    Value: !GetAtt KlingWebhookHandlerFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-KlingWebhookHandlerFunctionArn"
+
+  AssemblyRetrieveSegmentsFunctionArn:
+    Description: ARN of the AssemblyRetrieveSegmentsFunction Lambda
+    Value: !GetAtt AssemblyRetrieveSegmentsFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-AssemblyRetrieveSegmentsFunctionArn"
+
+  AssemblyAssembleVideoFunctionArn:
+    Description: ARN of the AssemblyAssembleVideoFunction Lambda
+    Value: !GetAtt AssemblyAssembleVideoFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-AssemblyAssembleVideoFunctionArn"
+
+  AssemblyFinalizeJobFunctionArn:
+    Description: ARN of the AssemblyFinalizeJobFunction Lambda
+    Value: !GetAtt AssemblyFinalizeJobFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-AssemblyFinalizeJobFunctionArn"
+
+  # --- API Gateway ---
+
+  WebhookApiEndpointUrl:
+    Description: >
+      HTTPS endpoint URL for the Kling.ai webhook receiver.
+      Use this as the webhook_url when submitting video generation tasks to Kling.ai.
+    Value: !Sub "https://${WebhookApi}.execute-api.${AWS::Region}.amazonaws.com/prod/webhook/kling"
+    Export:
+      Name: !Sub "${AWS::StackName}-WebhookApiEndpointUrl"
+
+  # --- EventBridge ---
+
+  PipelineEventBusArn:
+    Description: ARN of the custom EventBridge event bus for the pipeline
+    Value: !GetAtt PipelineEventBus.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-PipelineEventBusArn"
+
+  # --- Dead-Letter Queue ---
+
+  EventBridgeDLQArn:
+    Description: ARN of the SQS dead-letter queue for failed EventBridge deliveries
+    Value: !GetAtt EventBridgeDLQ.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-EventBridgeDLQArn"
+
+  # --- Step Functions ---
+
+  AssemblyStateMachineArn:
+    Description: ARN of the Step Functions assembly state machine
+    Value: !Ref AssemblyStateMachine
+    Export:
+      Name: !Sub "${AWS::StackName}-AssemblyStateMachineArn"

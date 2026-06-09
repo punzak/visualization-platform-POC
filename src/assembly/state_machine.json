@@ -1,0 +1,44 @@
+{
+    "Comment": "Assembles video segments into final property tour MP4",
+    "StartAt": "RetrieveSegments",
+    "States": {
+        "RetrieveSegments": {
+            "Type": "Task",
+            "Resource": "${RetrieveSegmentsLambdaArn}",
+            "Next": "AssembleVideo",
+            "Catch": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "Next": "HandleFailure",
+                    "ResultPath": "$.error"
+                }
+            ]
+        },
+        "AssembleVideo": {
+            "Type": "Task",
+            "Resource": "${AssembleVideoLambdaArn}",
+            "Next": "FinalizeJob",
+            "Catch": [
+                {
+                    "ErrorEquals": [
+                        "States.ALL"
+                    ],
+                    "Next": "HandleFailure",
+                    "ResultPath": "$.error"
+                }
+            ]
+        },
+        "FinalizeJob": {
+            "Type": "Task",
+            "Resource": "${FinalizeJobLambdaArn}",
+            "End": true
+        },
+        "HandleFailure": {
+            "Type": "Task",
+            "Resource": "${FinalizeJobLambdaArn}",
+            "End": true
+        }
+    }
+}
